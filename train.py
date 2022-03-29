@@ -8,7 +8,7 @@ import torch.utils.data
 import torchvision.utils as utils
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
-from tqdm import tqdm
+from tqdm import tqdm  # 进度条
 
 import pytorch_ssim
 from data_utils import TrainDatasetFromFolder, ValDatasetFromFolder, display_transform
@@ -23,36 +23,41 @@ parser.add_argument('--num_epochs', default=100, type=int, help='train epoch num
 
 
 if __name__ == '__main__':
+    os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
     opt = parser.parse_args()
     
     CROP_SIZE = opt.crop_size
     UPSCALE_FACTOR = opt.upscale_factor
     NUM_EPOCHS = opt.num_epochs
-    
-    train_set = TrainDatasetFromFolder('data/DIV2K_train_HR', crop_size=CROP_SIZE, upscale_factor=UPSCALE_FACTOR)
-    val_set = ValDatasetFromFolder('data/DIV2K_valid_HR', upscale_factor=UPSCALE_FACTOR)
+
+    # 加载数据集
+    train_set = TrainDatasetFromFolder('data/VOC2012/train', crop_size=CROP_SIZE, upscale_factor=UPSCALE_FACTOR)
+    val_set = ValDatasetFromFolder('data/VOC2012/val', upscale_factor=UPSCALE_FACTOR)
     train_loader = DataLoader(dataset=train_set, num_workers=4, batch_size=64, shuffle=True)
     val_loader = DataLoader(dataset=val_set, num_workers=4, batch_size=1, shuffle=False)
-    
+    # 加载网络模型
     netG = Generator(UPSCALE_FACTOR)
     print('# generator parameters:', sum(param.numel() for param in netG.parameters()))
     netD = Discriminator()
     print('# discriminator parameters:', sum(param.numel() for param in netD.parameters()))
-    
+
+    # 加载loss函数
     generator_criterion = GeneratorLoss()
-    
+    # 判断GPU加速
     if torch.cuda.is_available():
         netG.cuda()
         netD.cuda()
         generator_criterion.cuda()
-    
+
+    # 定义Adam优化器
     optimizerG = optim.Adam(netG.parameters())
     optimizerD = optim.Adam(netD.parameters())
-    
+    # 定义结果保存的字典，值为列表
     results = {'d_loss': [], 'g_loss': [], 'd_score': [], 'g_score': [], 'psnr': [], 'ssim': []}
     
     for epoch in range(1, NUM_EPOCHS + 1):
-        train_bar = tqdm(train_loader)
+        train_bar = tqdm(train_loader)  # 生成进度条>>>>>>>>
+        # 定义字典统计相关超参数
         running_results = {'batch_sizes': 0, 'd_loss': 0, 'g_loss': 0, 'd_score': 0, 'g_score': 0}
     
         netG.train()
@@ -63,32 +68,33 @@ if __name__ == '__main__':
             running_results['batch_sizes'] += batch_size
     
             ############################
-            # (1) Update D network: maximize D(x)-1-D(G(z))
+            # data/z：由target下采样的低分辨率图像 -->  G --> fake_img --> D --> fake_out(label)
+            # target/real_img：高分辨率图像（原图） --> D --> real_out(label)
             ###########################
-            real_img = Variable(target)
+            real_img = Variable(target)  # torch数据类型的标签图像real_img
             if torch.cuda.is_available():
                 real_img = real_img.cuda()
-            z = Variable(data)
+            z = Variable(data)  # torch数据类型的输入图像z
             if torch.cuda.is_available():
                 z = z.cuda()
-            fake_img = netG(z)
+            fake_img = netG(z)  # 生成的超分辨图像
     
-            netD.zero_grad()
-            real_out = netD(real_img).mean()
-            fake_out = netD(fake_img).mean()
-            d_loss = 1 - real_out + fake_out
-            d_loss.backward(retain_graph=True)
-            optimizerD.step()
+            netD.zero_grad()  # 判别网络的梯度归零
+            real_out = netD(real_img).mean()  # 判别网络对于标签图像的输出的均值real_out
+            fake_out = netD(fake_img).mean()  # 判别网络对于fake_img的输出的均值fake_out
+            d_loss = 1 - real_out + fake_out  # d_loss = - [D(z)-1-D(G(z))],所以最小化d_loss，则后一项的最大化
+            d_loss.backward(retain_graph=True)  # 反向传播
+            optimizerD.step()  # 梯度优化
     
             ############################
-            # (2) Update G network: minimize 1-D(G(z)) + Perception Loss + Image Loss + TV Loss
+            # (2) 更新生成网络: minimize 1-D(G(z)) + Perception Loss + Image Loss + TV Loss
             ###########################
-            netG.zero_grad()
+            netG.zero_grad()   # 生成网络梯度归零
             ## The two lines below are added to prevent runetime error in Google Colab ##
-            fake_img = netG(z)
-            fake_out = netD(fake_img).mean()
+            fake_img = netG(z)  # 生成网络的的输出图像fake_img
+            fake_out = netD(fake_img).mean()  # 判别网络对于fake_img的输出的均值fake_out
             ##
-            g_loss = generator_criterion(fake_out, fake_img, real_img)
+            g_loss = generator_criterion(fake_out, fake_img, real_img)  # 生成网络loss计算
             g_loss.backward()
             
             fake_img = netG(z)
@@ -99,23 +105,24 @@ if __name__ == '__main__':
 
             # loss for current batch before optimization 
             running_results['g_loss'] += g_loss.item() * batch_size
-            running_results['d_loss'] += d_loss.item() * batch_size
-            running_results['d_score'] += real_out.item() * batch_size
-            running_results['g_score'] += fake_out.item() * batch_size
-    
+            running_results['d_loss'] += d_loss.item() * batch_size  # d_loss real/fake通过判别器的差距
+            running_results['d_score'] += real_out.item() * batch_size  # real通过判别器的值
+            running_results['g_score'] += fake_out.item() * batch_size  # fake通过判别器的值
+            # 描述进度和损失函数，得分函数的平均值
             train_bar.set_description(desc='[%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f' % (
                 epoch, NUM_EPOCHS, running_results['d_loss'] / running_results['batch_sizes'],
                 running_results['g_loss'] / running_results['batch_sizes'],
                 running_results['d_score'] / running_results['batch_sizes'],
                 running_results['g_score'] / running_results['batch_sizes']))
-    
+
+        # ################## 进入eval模式 （测试模式参数固定，只有前向传播）用测试集###############
         netG.eval()
         out_path = 'training_results/SRF_' + str(UPSCALE_FACTOR) + '/'
         if not os.path.exists(out_path):
             os.makedirs(out_path)
         
         with torch.no_grad():
-            val_bar = tqdm(val_loader)
+            val_bar = tqdm(val_loader)  # 用验证集进行计算MSE，输出图像
             valing_results = {'mse': 0, 'ssims': 0, 'psnr': 0, 'ssim': 0, 'batch_sizes': 0}
             val_images = []
             for val_lr, val_hr_restore, val_hr in val_bar:
@@ -126,7 +133,7 @@ if __name__ == '__main__':
                 if torch.cuda.is_available():
                     lr = lr.cuda()
                     hr = hr.cuda()
-                sr = netG(lr)
+                sr = netG(lr)  # 直接输出结果，没有参数优化的过程
         
                 batch_mse = ((sr - hr) ** 2).data.mean()
                 valing_results['mse'] += batch_mse * batch_size
@@ -137,15 +144,16 @@ if __name__ == '__main__':
                 val_bar.set_description(
                     desc='[converting LR images to SR images] PSNR: %.4f dB SSIM: %.4f' % (
                         valing_results['psnr'], valing_results['ssim']))
-        
+                # 通过extend把三张图连在一起
                 val_images.extend(
                     [display_transform()(val_hr_restore.squeeze(0)), display_transform()(hr.data.cpu().squeeze(0)),
                      display_transform()(sr.data.cpu().squeeze(0))])
-            val_images = torch.stack(val_images)
+            val_images = torch.stack(val_images)  # 按行拼接，按列拼接
             val_images = torch.chunk(val_images, val_images.size(0) // 15)
-            val_save_bar = tqdm(val_images, desc='[saving training results]')
+            val_save_bar = tqdm(val_images, desc='[saving training results]')  #传入str类型，作为进度条标题（类似于说明）
             index = 1
             for image in val_save_bar:
+                # 每一行显示三个图像
                 image = utils.make_grid(image, nrow=3, padding=5)
                 utils.save_image(image, out_path + 'epoch_%d_index_%d.png' % (epoch, index), padding=5)
                 index += 1
