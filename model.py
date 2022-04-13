@@ -13,11 +13,6 @@ class Generator(nn.Module):
             nn.PReLU()
         )
         
-        self.block2 = ResidualBlock(64)
-        self.block3 = ResidualBlock(64)
-        self.block4 = ResidualBlock(64)
-        self.block5 = ResidualBlock(64)
-        self.block6 = ResidualBlock(64)
         self.block7 = nn.Sequential(
             nn.Conv2d(64, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64)
@@ -28,11 +23,17 @@ class Generator(nn.Module):
 
     def forward(self, x):
         block1 = self.block1(x)
-        block2 = self.block2(block1)
-        block3 = self.block3(block2)
-        block4 = self.block4(block3)
-        block5 = self.block5(block4)
-        block6 = self.block6(block5)
+        block2_1 = RSBU_CW(in_channels=4, out_channels=4, kernel_size=3, down_sample=True)(block1)
+        block2 = AttentionLayer(512)(block2_1)
+        block3_1 = RSBU_CW(in_channels=4, out_channels=4, kernel_size=3, down_sample=False)(block2)
+        block3 = AttentionLayer(512)(block3_1)
+        block4_1 = RSBU_CW(in_channels=4, out_channels=4, kernel_size=3, down_sample=True)(block3)
+        block4 = AttentionLayer(512)(block4_1)
+        block5_1 = RSBU_CW(in_channels=4, out_channels=4, kernel_size=3, down_sample=False)(block4)
+        block5 = AttentionLayer(512)(block5_1)
+        block6_1 = RSBU_CW(in_channels=4, out_channels=4, kernel_size=3, down_sample=True)(block5)
+        block6 = AttentionLayer(512)(block6_1)
+
         block7 = self.block7(block6)
         block8 = self.block8(block1 + block7)
 
@@ -49,30 +50,37 @@ class Discriminator(nn.Module):
             nn.Conv2d(64, 64, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm2d(64),
             nn.LeakyReLU(0.2),
+            AttentionLayer(512),
 
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
             nn.LeakyReLU(0.2),
+            AttentionLayer(512),
 
             nn.Conv2d(128, 128, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm2d(128),
             nn.LeakyReLU(0.2),
+            AttentionLayer(512),
 
             nn.Conv2d(128, 256, kernel_size=3, padding=1),
             nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2),
+            AttentionLayer(512),
 
             nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2),
+            AttentionLayer(512),
 
             nn.Conv2d(256, 512, kernel_size=3, padding=1),
             nn.BatchNorm2d(512),
             nn.LeakyReLU(0.2),
+            AttentionLayer(512),
 
             nn.Conv2d(512, 512, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm2d(512),
             nn.LeakyReLU(0.2),
+            AttentionLayer(512),
 
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(512, 1024, kernel_size=1),
