@@ -32,9 +32,9 @@ image = Variable(ToTensor()(image), volatile=True).unsqueeze(0)
 if TEST_MODE:
     image = image.cuda()
 
-start = time.clock()
+start = time.perf_counter()
 out = model(image)
-elapsed = (time.clock() - start)
+elapsed = (time.perf_counter() - start)
 print('cost' + str(elapsed) + 's')
 out_img = ToPILImage()(out[0].data.cpu())
 out_img.save('out_srf_' + str(UPSCALE_FACTOR) + '_' + IMAGE_NAME)
