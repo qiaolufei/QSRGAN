@@ -2,6 +2,7 @@ import math
 import torch
 from torch import nn
 import torch.nn.functional as F
+from rsNet import resnet18
 
 class Generator(nn.Module):
     def __init__(self, scale_factor):
@@ -23,16 +24,16 @@ class Generator(nn.Module):
 
     def forward(self, x):
         block1 = self.block1(x)
-        block2_1 = RSBU_CW(in_channels=4, out_channels=4, kernel_size=3, down_sample=True)(block1)
-        block2 = AttentionLayer(512)(block2_1)
-        block3_1 = RSBU_CW(in_channels=4, out_channels=4, kernel_size=3, down_sample=False)(block2)
-        block3 = AttentionLayer(512)(block3_1)
-        block4_1 = RSBU_CW(in_channels=4, out_channels=4, kernel_size=3, down_sample=True)(block3)
-        block4 = AttentionLayer(512)(block4_1)
-        block5_1 = RSBU_CW(in_channels=4, out_channels=4, kernel_size=3, down_sample=False)(block4)
-        block5 = AttentionLayer(512)(block5_1)
-        block6_1 = RSBU_CW(in_channels=4, out_channels=4, kernel_size=3, down_sample=True)(block5)
-        block6 = AttentionLayer(512)(block6_1)
+        resnet18()
+        block2 = AttentionLayer(512)(block1)
+        resnet18()
+        block3 = AttentionLayer(512)(block2)
+        resnet18()
+        block4 = AttentionLayer(512)(block3)
+        resnet18()
+        block5 = AttentionLayer(512)(block4)
+        resnet18()
+        block6 = AttentionLayer(512)(block5)
 
         block7 = self.block7(block6)
         block8 = self.block8(block1 + block7)
@@ -124,57 +125,6 @@ class UpsampleBLock(nn.Module):
         x = self.prelu(x)
         return x
 
-class RSBU_CW(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, down_sample=False):
-        super().__init__()
-        self.down_sample = down_sample
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        stride = 1
-        if down_sample:
-            stride = 2
-        self.BRC = nn.Sequential(
-            nn.BatchNorm1d(in_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, stride=stride,
-                      padding=1),
-            nn.BatchNorm1d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv1d(in_channels=out_channels, out_channels=out_channels, kernel_size=kernel_size, stride=1,
-                      padding=1)
-        )
-        self.global_average_pool = nn.AdaptiveAvgPool1d(1)
-        self.FC = nn.Sequential(
-            nn.Linear(in_features=out_channels, out_features=out_channels),
-            nn.BatchNorm1d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.Linear(in_features=out_channels, out_features=out_channels),
-            nn.Sigmoid()
-        )
-        self.flatten = nn.Flatten()
-        self.average_pool = nn.AvgPool1d(kernel_size=1, stride=2)
-
-    def forward(self, input):
-        x = self.BRC(input)
-        x_abs = torch.abs(x)
-        gap = self.global_average_pool(x_abs)
-        gap = self.flatten(gap)
-        alpha = self.FC(gap)
-        threshold = torch.mul(gap, alpha)
-        threshold = torch.unsqueeze(threshold, 2)
-        # 软阈值化
-        sub = x_abs - threshold
-        zeros = sub - sub
-        n_sub = torch.max(sub, zeros)
-        x = torch.mul(torch.sign(x), n_sub)  
-        if self.down_sample:  # 如果是下采样，则对输入进行平均池化下采样
-            input = self.average_pool(input)
-        if self.in_channels != self.out_channels:  # 如果输入的通道和输出的通道不一致，则进行padding,直接通过复制拼接矩阵进行padding,原代码是通过填充0
-            zero_padding=torch.zeros(input.shape).cuda()
-            input = torch.cat((input, zero_padding), dim=1)
-
-        result = x + input
-        return result
 
 class AttentionLayer(nn.Module):
     """
@@ -195,7 +145,6 @@ class AttentionLayer(nn.Module):
         self.convB = nn.Conv2d(in_c,in_c,kernel_size=1)
         self.convV = nn.Conv2d(in_c,in_c,kernel_size=1)
     def forward(self,input):
-
         feature_maps = self.convA(input)
         atten_map = self.convB(input)
         b, _, h, w = feature_maps.shape
